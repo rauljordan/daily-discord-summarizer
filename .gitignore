@@ -4,3 +4,4 @@
 *.sqlite-shm
 *.sqlite-wal
 .env
+messages

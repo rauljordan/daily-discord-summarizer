@@ -11,7 +11,6 @@ use serenity::client::{Context, EventHandler};
 use serenity::model::prelude::*;
 use serenity::prelude::*;
 
-use serenity::utils::MessageBuilder;
 use tracing::{error, info, warn};
 use tracing_subscriber;
 
@@ -29,6 +28,7 @@ use config::{Config, ConfigError};
 struct AppConfig {
     database: DatabaseConfig,
     service: ServiceConfig,
+    discord: DiscordConfig,
 }
 
 #[derive(Deserialize)]
@@ -39,6 +39,12 @@ struct DatabaseConfig {
 #[derive(Deserialize)]
 struct ServiceConfig {
     interval_seconds: u64,
+    message_log_directory: PathBuf,
+}
+
+#[derive(Deserialize)]
+struct DiscordConfig {
+    channel_ids: Vec<String>,
 }
 
 impl AppConfig {
@@ -63,31 +69,7 @@ impl Handler {
 
 #[async_trait]
 impl EventHandler for Handler {
-    async fn message(&self, context: Context, msg: Message) {
-        if msg.content == "!ping" {
-            let channel = match msg.channel_id.to_channel(&context).await {
-                Ok(channel) => channel,
-                Err(why) => {
-                    error!("Error getting channel: {why:?}");
-                    return;
-                }
-            };
-
-            // The message builder allows for creating a message by mentioning users dynamically,
-            // pushing "safe" versions of content (such as bolding normalized content), displaying
-            // emojis, and more.
-            let response = MessageBuilder::new()
-                .push("User ")
-                .push_bold_safe(&msg.author.name)
-                .push(" used the 'ping' command in the ")
-                .mention(&channel)
-                .push(" channel")
-                .build();
-
-            if let Err(why) = msg.channel_id.say(&context.http, &response).await {
-                error!("Error sending message: {why:?}");
-            }
-        }
+    async fn message(&self, _: Context, msg: Message) {
         if let Err(e) = self.tx.send(DiscordMessage::Received(msg)).await {
             error!("Could not send received message tx over channel: {e}");
         }
@@ -115,7 +97,7 @@ pub struct GptMessage {
 
 async fn summarize(text: &str) -> eyre::Result<String> {
     let client = reqwest::Client::new();
-    let api_key = "";
+    let api_key = env::var("OPEN_AI_SECRET").expect("No OPEN_AI_SECRET provided");
     let response = client
         .post("https://api.openai.com/v1/chat/completions")
         .header("Authorization", format!("Bearer {}", api_key))
@@ -146,7 +128,7 @@ enum DiscordMessage {
     Received(Message),
 }
 
-const MAX_REQUEST_TOKENS: usize = 512;
+const MAX_REQUEST_TOKENS: usize = 2048;
 
 struct MessageLogService {
     summarize_tx: Sender<SummarizeRequest>,
@@ -163,7 +145,8 @@ impl MessageLogService {
         summarize_tx: Sender<SummarizeRequest>,
         discord_rx: Receiver<DiscordMessage>,
     ) -> Self {
-        let log_file_index: usize = 0;
+        let log_file_index: usize = find_last_log_file_index(&message_log_path).unwrap_or(0);
+        info!("{}", log_file_index);
         let fpath = message_log_path.join(format!("messages_{log_file_index}.txt"));
         let message_log = OpenOptions::new()
             .append(true) // Set to append mode
@@ -177,7 +160,7 @@ impl MessageLogService {
             summarize_tx,
             discord_rx,
             message_log_path,
-            log_file_index: 0,
+            log_file_index,
             curr_file_token_count,
             message_log,
         }
@@ -233,6 +216,28 @@ impl MessageLogService {
             }
         }
     }
+}
+
+fn find_last_log_file_index(dirpath: &PathBuf) -> Option<usize> {
+    std::fs::read_dir(dirpath)
+        .expect("Directory containing message logs not found")
+        .filter_map(|entry| {
+            entry.ok().and_then(|e| {
+                e.path().file_name().and_then(|name| {
+                    name.to_str().and_then(|s| {
+                        if s.starts_with("messages_") && s.ends_with(".txt") {
+                            s.trim_start_matches("messages_")
+                                .trim_end_matches(".txt")
+                                .parse::<usize>()
+                                .ok()
+                        } else {
+                            None
+                        }
+                    })
+                })
+            })
+        })
+        .max()
 }
 
 const CHARS_PER_TOKEN: usize = 4;
@@ -519,14 +524,14 @@ async fn main() -> eyre::Result<()> {
     let token = env::var("DISCORD_BOT_SECRET").expect("No DISCORD_BOT_SECRET provided");
     let config = AppConfig::load_from_file("config.toml")?;
     _ = config;
-    let messages_base = std::path::PathBuf::new();
+    let messages_base = config.service.message_log_directory;
 
     // Initiate a connection to the database file, creating the file if required.
     let database = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(4)
         .connect_with(
             sqlx::sqlite::SqliteConnectOptions::new()
-                .filename("db.sqlite")
+                .filename(config.database.url)
                 .create_if_missing(true),
         )
         .await
@@ -558,7 +563,8 @@ async fn main() -> eyre::Result<()> {
         message_log_srv.run().await;
     }));
 
-    let mut daily_recap_srv = DailyRecapService::new(shared_db.clone(), 60);
+    let mut daily_recap_srv =
+        DailyRecapService::new(shared_db.clone(), config.service.interval_seconds);
     tasks.push(task::spawn(async move {
         info!("Running daily digest service");
         daily_recap_srv.run().await;

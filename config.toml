@@ -1,5 +1,9 @@
 [database]
-url = "sqlite::memory:"
+url = "db.sqlite"
 
 [service]
-interval_seconds = 60
+interval_seconds = 10800
+message_log_directory = "messages"
+
+[discord]
+channel_ids = []
