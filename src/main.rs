@@ -12,7 +12,6 @@ use serenity::model::prelude::*;
 use serenity::prelude::*;
 
 use tracing::{error, info, warn};
-use tracing_subscriber;
 
 use dotenv::dotenv;
 use futures::future::join_all;
@@ -28,6 +27,7 @@ use config::{Config, ConfigError};
 struct AppConfig {
     database: DatabaseConfig,
     service: ServiceConfig,
+    #[allow(unused)]
     discord: DiscordConfig,
 }
 
@@ -44,6 +44,7 @@ struct ServiceConfig {
 
 #[derive(Deserialize)]
 struct DiscordConfig {
+    #[allow(unused)]
     channel_ids: Vec<String>,
 }
 
