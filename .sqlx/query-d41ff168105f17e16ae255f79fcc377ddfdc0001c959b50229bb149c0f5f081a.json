@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE summaries SET daily_digest_id = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "d41ff168105f17e16ae255f79fcc377ddfdc0001c959b50229bb149c0f5f081a"
+}

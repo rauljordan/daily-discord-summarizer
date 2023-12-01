@@ -1,0 +1,5 @@
+[database]
+url = "sqlite::memory:"
+
+[service]
+interval_seconds = 60

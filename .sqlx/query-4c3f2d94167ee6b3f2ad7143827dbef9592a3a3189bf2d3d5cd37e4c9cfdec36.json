@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO summaries (daily_digest_id, text) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "4c3f2d94167ee6b3f2ad7143827dbef9592a3a3189bf2d3d5cd37e4c9cfdec36"
+}
