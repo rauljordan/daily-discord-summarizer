@@ -38,8 +38,11 @@ struct DatabaseConfig {
 
 #[derive(Deserialize)]
 struct ServiceConfig {
-    interval_seconds: u64,
+    produce_digest_interval_seconds: u64,
     message_log_directory: PathBuf,
+    port: u16,
+    host: String,
+    max_gpt_request_tokens: usize,
 }
 
 #[derive(Deserialize)]
@@ -129,8 +132,6 @@ enum DiscordMessage {
     Received(Message),
 }
 
-const MAX_REQUEST_TOKENS: usize = 2048;
-
 struct MessageLogService {
     summarize_tx: Sender<SummarizeRequest>,
     discord_rx: Receiver<DiscordMessage>,
@@ -138,6 +139,7 @@ struct MessageLogService {
     log_file_index: usize,
     curr_file_token_count: usize,
     message_log: File,
+    summary_tokens_threshold: usize,
 }
 
 impl MessageLogService {
@@ -145,6 +147,7 @@ impl MessageLogService {
         message_log_path: PathBuf,
         summarize_tx: Sender<SummarizeRequest>,
         discord_rx: Receiver<DiscordMessage>,
+        summary_tokens_threshold: usize,
     ) -> Self {
         let log_file_index: usize = find_last_log_file_index(&message_log_path).unwrap_or(0);
         info!("{}", log_file_index);
@@ -164,6 +167,7 @@ impl MessageLogService {
             log_file_index,
             curr_file_token_count,
             message_log,
+            summary_tokens_threshold,
         }
     }
 
@@ -175,7 +179,9 @@ impl MessageLogService {
                     // Have we reached the max tokens we want in our request? If so, then increase the log file index
                     // and emit a summarize request.
                     let incoming_token_count = msg.content.chars().count() / CHARS_PER_TOKEN;
-                    if self.curr_file_token_count + incoming_token_count > MAX_REQUEST_TOKENS {
+                    if self.curr_file_token_count + incoming_token_count
+                        > self.summary_tokens_threshold
+                    {
                         warn!("File has overflowed the allowed token count, creating new file");
                         let log_file_index = self.log_file_index + 1;
                         let fpath = self
@@ -558,14 +564,21 @@ async fn main() -> eyre::Result<()> {
         summary_srv.run().await;
     }));
 
-    let mut message_log_srv = MessageLogService::new(messages_base, summarize_tx, discord_rx);
+    let mut message_log_srv = MessageLogService::new(
+        messages_base,
+        summarize_tx,
+        discord_rx,
+        config.service.max_gpt_request_tokens,
+    );
     tasks.push(task::spawn(async move {
         info!("Running message log service");
         message_log_srv.run().await;
     }));
 
-    let mut daily_recap_srv =
-        DailyRecapService::new(shared_db.clone(), config.service.interval_seconds);
+    let mut daily_recap_srv = DailyRecapService::new(
+        shared_db.clone(),
+        config.service.produce_digest_interval_seconds,
+    );
     tasks.push(task::spawn(async move {
         info!("Running daily digest service");
         daily_recap_srv.run().await;
@@ -591,10 +604,13 @@ async fn main() -> eyre::Result<()> {
         .layer(Extension(shared_db));
 
     tasks.push(task::spawn(async move {
-        info!("Serving http API on port 3000");
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
-            .await
-            .unwrap();
+        info!("Serving http API on port {}", config.service.port);
+        let listener = tokio::net::TcpListener::bind(format!(
+            "{}:{}",
+            config.service.host, config.service.port
+        ))
+        .await
+        .unwrap();
         axum::serve(listener, app).await.unwrap();
     }));
 
