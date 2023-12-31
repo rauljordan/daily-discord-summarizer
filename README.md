@@ -13,8 +13,18 @@ This PR implements a bot that listens for public Discord messages in a server an
 **Requirements**
 
 - Rust 1.74.0
+- OpenSSL libraries: libssl-dev
 - `OPEN_AI_SECRET` env var: Open AI API key
 - `DISCORD_BOT_SECRET` env var: Discord bot secret key with "read messages permissions"
+
+On linux, also:
+
+- clang
+- pkg-config
+- build-essential
+- libssl-dev
+- curl
+- git
 
 **Configuring**
 
