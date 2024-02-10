@@ -108,3 +108,20 @@ pub async fn insert_daily_digest(
     transaction.commit().await?;
     Ok(())
 }
+
+pub async fn fetch_latest_summaries(
+    pool: Arc<SqlitePool>,
+    count: usize,
+    page: usize,
+) -> Vec<Summary> {
+    let offset = count * (page - 1);
+    sqlx::query_as!(
+        Summary,
+        "SELECT * FROM summaries ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+        count as i64,
+        offset as i64
+    )
+    .fetch_all(&*pool)
+    .await
+    .unwrap_or_else(|_| vec![])
+}
